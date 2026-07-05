@@ -48,7 +48,7 @@ class OTPVerifySerializer(serializers.Serializer):
         otp_code = attrs['otp_code']
 
         try:
-            verified = OTPService.verify_otp(recipient, purpose, channel, otp_code)
+            verified = OTPService.verify_otp(recipient, purpose, otp_code)
             # If we get here, verification succeeded
             attrs['verified'] = True
             return attrs
@@ -65,7 +65,7 @@ class MobileLoginSerializer(serializers.Serializer):
     def validate(self, attrs):
         user = authenticate(username=attrs['mobile_number'], password=attrs['password'])
         if user is None or not user.is_active:
-            raise serializers.ValidationError({"non_field_errors": ["Invalid credentials"]})
+            raise serializers.ValidationError({"detail": "Invalid credentials"})
         attrs['user'] = user
         return attrs
 
@@ -119,7 +119,6 @@ class CustomerRegistrationSerializer(serializers.ModelSerializer):
             verified = OTPService.verify_otp(
                 attrs['otp_recipient'],
                 attrs['otp_purpose'],
-                attrs['otp_channel'],
                 attrs['otp_code']
             )
             if not verified:
@@ -237,7 +236,6 @@ class DealerRegistrationSerializer(serializers.ModelSerializer):
             verified = OTPService.verify_otp(
                 attrs['otp_recipient'],
                 attrs['otp_purpose'],
-                attrs['otp_channel'],
                 attrs['otp_code']
             )
             if not verified:
@@ -299,3 +297,82 @@ class DealerRegistrationSerializer(serializers.ModelSerializer):
         )
 
         return user
+    
+
+
+class LoginSerializer(serializers.Serializer):
+    """
+    Serializer for password-based login using mobile or email.
+    """
+    identifier = serializers.CharField(help_text="Mobile number or email")
+    password = serializers.CharField(write_only=True)
+
+    def validate(self, attrs):
+        identifier = attrs.get('identifier')
+        password = attrs.get('password')
+        request = self.context.get('request')
+
+        # Authenticate using our custom backend
+        user = authenticate(request, username=identifier, password=password)
+        if user is None:
+            raise serializers.ValidationError({"detail": "Invalid credentials"})
+
+        # Ensure user is active
+        if not user.is_active:
+            raise serializers.ValidationError({"detail": "User account is inactive"})
+
+        attrs['user'] = user
+        return attrs
+
+
+class OTPLoginSerializer(serializers.Serializer):
+    """
+    Serializer for OTP-based login.
+    """
+    recipient = serializers.CharField(max_length=100)
+    channel = serializers.ChoiceField(choices=[('sms', 'SMS'), ('whatsapp', 'WhatsApp'), ('email', 'Email')])
+    otp_code = serializers.CharField(max_length=10, min_length=4)
+
+    def validate(self, attrs):
+        recipient = attrs['recipient']
+        channel = attrs['channel']
+        otp_code = attrs['otp_code']
+
+        try:
+            verified = OTPService.verify_otp(recipient, 'LOGIN', otp_code)
+            if not verified:
+                raise serializers.ValidationError({"otp_code": "Invalid OTP"})
+        except (OTPVerificationError, OTPExpiredError, OTPAttemptsExceededError, OTPAlreadyUsedError) as e:
+            raise serializers.ValidationError({"otp_code": str(e)})
+        except Exception:
+            raise serializers.ValidationError({"otp_code": "OTP verification failed"})
+
+        from django.db.models import Q
+        try:
+            if channel == 'sms':
+                user = User.objects.get(mobile_number=recipient)
+            elif channel == 'email':
+                user = User.objects.get(email__iexact=recipient)
+            elif channel == 'whatsapp':
+                user = User.objects.get(Q(mobile_number=recipient) | Q(whatsapp_number=recipient))
+            else:
+                raise serializers.ValidationError({"detail": "Invalid channel"})
+        except User.DoesNotExist:
+            raise serializers.ValidationError({"detail": "No user found with this contact detail"})
+
+        if not user.is_active:
+            raise serializers.ValidationError({"detail": "User account is inactive"})
+
+        attrs['user'] = user
+        return attrs
+
+
+def get_tokens_for_user(user):
+    """
+    Generate access and refresh tokens for a user.
+    """
+    refresh = RefreshToken.for_user(user)
+    return {
+        'refresh': str(refresh),
+        'access': str(refresh.access_token),
+    }

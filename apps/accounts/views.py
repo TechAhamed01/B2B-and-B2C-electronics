@@ -8,15 +8,30 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.views import TokenRefreshView
 
 from services.otp.service import OTPService
 from services.exceptions import OTPSendError, OTPSendLimitExceeded
 from .serializers import (
     OTPRequestSerializer, OTPVerifySerializer,
     CustomerRegistrationSerializer, DealerRegistrationSerializer,
-    MobileLoginSerializer, UserSerializer
+    MobileLoginSerializer, UserSerializer, LoginSerializer, OTPLoginSerializer,
+    get_tokens_for_user
 )
 from .models import User
+
+
+class TestProtectedView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        return Response({
+            "message": "JWT working successfully",
+            "user_id": request.user.id,
+            "name": request.user.full_name,
+            "mobile": request.user.mobile_number,
+            "email": request.user.email,
+        })
 
 
 class OTPRequestView(APIView):
@@ -90,3 +105,35 @@ class DealerRegistrationView(APIView):
         user = serializer.save()
         user_serializer = UserSerializer(user)
         return Response(user_serializer.data, status=status.HTTP_201_CREATED)
+
+
+class LoginView(APIView):
+    permission_classes = [AllowAny]
+    serializer_class = LoginSerializer
+
+    def post(self, request):
+        serializer = self.serializer_class(data=request.data, context={'request': request})
+        serializer.is_valid(raise_exception=True)
+        user = serializer.validated_data['user']
+        tokens = get_tokens_for_user(user)
+        user_data = UserSerializer(user).data
+        return Response({
+            'tokens': tokens,
+            'user': user_data
+        }, status=status.HTTP_200_OK)
+
+
+class OTPLoginView(APIView):
+    permission_classes = [AllowAny]
+    serializer_class = OTPLoginSerializer
+
+    def post(self, request):
+        serializer = self.serializer_class(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = serializer.validated_data['user']
+        tokens = get_tokens_for_user(user)
+        user_data = UserSerializer(user).data
+        return Response({
+            'tokens': tokens,
+            'user': user_data
+        }, status=status.HTTP_200_OK)

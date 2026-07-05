@@ -160,7 +160,7 @@ class OTPService:
         }
 
     @classmethod
-    def verify_otp(cls, recipient: str, purpose: str, channel: str, raw_otp: str) -> bool:
+    def verify_otp(cls, recipient: str, purpose: str, raw_otp: str) -> bool:
         """
         Verify an OTP by recipient, purpose, channel, and raw code.
         Returns True if verified successfully.
@@ -170,19 +170,16 @@ class OTPService:
             OTPAttemptsExceededError
             OTPAlreadyUsedError
         """
-        # Filter by recipient based on channel
         filter_kwargs = {
             'purpose': purpose,
             'is_used': False,
         }
-        if channel == 'sms':
-            filter_kwargs['mobile_number'] = recipient
-        elif channel == 'whatsapp':
-            filter_kwargs['whatsapp_number'] = recipient
-        elif channel == 'email':
+        if '@' in recipient:
             filter_kwargs['email'] = recipient
+        elif len(recipient) == 10 and recipient.isdigit():
+            filter_kwargs['mobile_number'] = recipient
         else:
-            raise ValueError(f"Unsupported channel: {channel}")
+            filter_kwargs['whatsapp_number'] = recipient
 
         try:
             # Fetch the latest unused OTP for this recipient/purpose/channel
